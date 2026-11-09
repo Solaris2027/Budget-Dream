@@ -1,50 +1,52 @@
-# Build automatique — Budget Dream
-#
-# Un seul push sur GitHub déclenche DEUX livraisons gratuites :
-#   1. APK Android    -> onglet Actions -> Artifacts -> budget-dream-apk
-#   2. App Web iPhone -> https://VOTRE_PSEUDO.github.io/budget_dream/
-#                      (Safari -> Partager -> "Sur l'écran d'accueil")
-#
-# AUCUN outil à installer sur le PC. Builds ~10-15 min, gratuits
-# (dépôt public illimité ; dépôt privé 2 000 min/mois).
-
-name: Build APK Android + App Web
+# Build APK Budget Dream — version renforcée avec diagnostic
+name: Build APK Budget Dream
 
 on:
   push:
     branches: [main]
-  workflow_dispatch: {} # bouton "Run workflow" manuel dans l'onglet Actions
+  workflow_dispatch: {}
 
 jobs:
-  # ---------- 1) APK Android ----------
   apk:
     name: APK Android
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Java 17 : requis par le Gradle d'Android embarqué dans Flutter
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # Version de Flutter fixée : évite les surprises d'une nouvelle version
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          cache: true
+          flutter-version: "3.35.0"
 
-      # Le starter ne contient que lib/ + pubspec.yaml : on génère les
-      # dossiers plateformes (android/) autour du code existant.
-      # applicationId obtenu : fr.budgetdream.budget_dream_app
+      # Trouve l'app Flutter dans le dépôt et affiche ce qu'il faut
+      - name: Localiser l app Flutter (diagnostic)
+        run: |
+          echo "=== Contenu du dépôt ==="
+          ls -la
+          PUB=$(find . -type f -name pubspec.yaml -not -path "*/build/*" | sort | head -1)
+          if [ -z "$PUB" ]; then
+            echo ""
+            echo "!!! ERREUR : pubspec.yaml introuvable dans le dépôt !!!"
+            echo "=== Dossiers présents (3 niveaux) ==="
+            find . -maxdepth 3 -type d -not -path "*/.git*" | head -40
+            exit 1
+          fi
+          echo "PROJ=$(dirname "$PUB")" >> "$GITHUB_ENV"
+          echo "=== Projet détecté dans : $(dirname "$PUB") ==="
+          echo "=== Contenu du pubspec.yaml ==="
+          cat "$PUB"
+
       - name: Générer la plateforme Android
-        working-directory: frontend/budget_dream_app
+        working-directory: ${{ env.PROJ }}
         run: flutter create . --platforms android --org fr.budgetdream --project-name budget_dream_app
 
-      # Dev uniquement : autorise l'app à parler à un backend local en HTTP
-      # (exemple http://192.168.x.x:8000). En production : HTTPS obligatoire.
       - name: Autoriser HTTP en développement
-        working-directory: frontend/budget_dream_app
+        working-directory: ${{ env.PROJ }}
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
           if ! grep -q "usesCleartextTraffic" "$MANIFEST"; then
@@ -52,71 +54,16 @@ jobs:
           fi
 
       - name: Dépendances Flutter
-        working-directory: frontend/budget_dream_app
+        working-directory: ${{ env.PROJ }}
         run: flutter pub get
 
-      - name: Compiler l'APK release
-        working-directory: frontend/budget_dream_app
+      - name: Compiler l APK release
+        working-directory: ${{ env.PROJ }}
         run: flutter build apk --release
 
-      - name: Publier l'APK (Artifacts)
+      - name: Publier l APK (Artifacts)
         uses: actions/upload-artifact@v4
         with:
           name: budget-dream-apk
-          path: frontend/budget_dream_app/build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ env.PROJ }}/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
-
-  # ---------- 2) App Web (iPhone, écran d'accueil) ----------
-  web:
-    name: App Web (iPhone)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Générer la plateforme Web
-        working-directory: frontend/budget_dream_app
-        run: flutter create . --platforms web --org fr.budgetdream --project-name budget_dream_app
-
-      - name: Dépendances Flutter
-        working-directory: frontend/budget_dream_app
-        run: flutter pub get
-
-      # base-href = nom du dépôt -> URL https://PSEUDO.github.io/budget_dream/
-      - name: Compiler la version Web
-        working-directory: frontend/budget_dream_app
-        run: flutter build web --release --base-href "/budget_dream/"
-
-      # Active GitHub Pages automatiquement (hébergement gratuit inclus)
-      - name: Configurer GitHub Pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
-      - name: Empaqueter la version Web
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: frontend/budget_dream_app/build/web
-
-  deploy-web:
-    name: Publication Web (iPhone)
-    needs: web
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Déployer sur GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
