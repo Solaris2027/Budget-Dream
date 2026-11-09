@@ -1,0 +1,122 @@
+# Build automatique — Budget Dream
+#
+# Un seul push sur GitHub déclenche DEUX livraisons gratuites :
+#   1. APK Android    -> onglet Actions -> Artifacts -> budget-dream-apk
+#   2. App Web iPhone -> https://VOTRE_PSEUDO.github.io/budget_dream/
+#                      (Safari -> Partager -> "Sur l'écran d'accueil")
+#
+# AUCUN outil à installer sur le PC. Builds ~10-15 min, gratuits
+# (dépôt public illimité ; dépôt privé 2 000 min/mois).
+
+name: Build APK Android + App Web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {} # bouton "Run workflow" manuel dans l'onglet Actions
+
+jobs:
+  # ---------- 1) APK Android ----------
+  apk:
+    name: APK Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Java 17 : requis par le Gradle d'Android embarqué dans Flutter
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # Le starter ne contient que lib/ + pubspec.yaml : on génère les
+      # dossiers plateformes (android/) autour du code existant.
+      # applicationId obtenu : fr.budgetdream.budget_dream_app
+      - name: Générer la plateforme Android
+        working-directory: frontend/budget_dream_app
+        run: flutter create . --platforms android --org fr.budgetdream --project-name budget_dream_app
+
+      # Dev uniquement : autorise l'app à parler à un backend local en HTTP
+      # (exemple http://192.168.x.x:8000). En production : HTTPS obligatoire.
+      - name: Autoriser HTTP en développement
+        working-directory: frontend/budget_dream_app
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if ! grep -q "usesCleartextTraffic" "$MANIFEST"; then
+            sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$MANIFEST"
+          fi
+
+      - name: Dépendances Flutter
+        working-directory: frontend/budget_dream_app
+        run: flutter pub get
+
+      - name: Compiler l'APK release
+        working-directory: frontend/budget_dream_app
+        run: flutter build apk --release
+
+      - name: Publier l'APK (Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: budget-dream-apk
+          path: frontend/budget_dream_app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+  # ---------- 2) App Web (iPhone, écran d'accueil) ----------
+  web:
+    name: App Web (iPhone)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Générer la plateforme Web
+        working-directory: frontend/budget_dream_app
+        run: flutter create . --platforms web --org fr.budgetdream --project-name budget_dream_app
+
+      - name: Dépendances Flutter
+        working-directory: frontend/budget_dream_app
+        run: flutter pub get
+
+      # base-href = nom du dépôt -> URL https://PSEUDO.github.io/budget_dream/
+      - name: Compiler la version Web
+        working-directory: frontend/budget_dream_app
+        run: flutter build web --release --base-href "/budget_dream/"
+
+      # Active GitHub Pages automatiquement (hébergement gratuit inclus)
+      - name: Configurer GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Empaqueter la version Web
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/budget_dream_app/build/web
+
+  deploy-web:
+    name: Publication Web (iPhone)
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Déployer sur GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
