@@ -139,7 +139,7 @@ class BankService {
   }
 
   // ---------- Démo hors-ligne (API injoignable) ----------
-  static List<ConnectedAccount> _demoAccounts() => const [
+  static List<ConnectedAccount> _demoAccounts() => [
         ConnectedAccount(
             providerAccountId: 'demo-ccp',
             label: 'Compte courant',
